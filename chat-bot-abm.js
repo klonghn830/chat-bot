@@ -254,6 +254,7 @@
             resize: none;
             max-height: 100px;
             font-family: inherit;
+            color: #000;
         }
 
         .abm-input-wrapper textarea::placeholder {
@@ -334,11 +335,12 @@
     // Configuration
     const ABM_CHATBOT_CONFIG = {
         webhookUrl: 'https://abm.hocn8n.com/webhook/86de9261-be70-4524-9638-e92b37a5575a/chat', // Thay bằng URL thực tế
-        brandName: 'ABM A.I',
+        brandName: 'ABM - AI BUSINESS MASTER',
         brandSubtitle: 'Assistant Bot',
         welcomeMessage: 'Xin chào! Tôi là ABM AI Assistant. Tôi có thể giúp gì cho bạn hôm nay?',
         placeholder: 'Nhập tin nhắn của bạn...',
-        position: 'bottom-right' // bottom-right, bottom-left
+        position: 'bottom-right', // bottom-right, bottom-left
+        testMode: true // BẬT TEST MODE TẠI ĐÂY
     };
 
     let isOpen = false;
@@ -493,6 +495,25 @@
         // Show typing
         showTyping();
 
+        // Check if webhook URL is configured
+        if (ABM_CHATBOT_CONFIG.webhookUrl === 'YOUR_N8N_WEBHOOK_URL_HERE' || !ABM_CHATBOT_CONFIG.webhookUrl) {
+            hideTyping();
+            addMessage('⚠️ Webhook URL chưa được cấu hình. Vui lòng liên hệ admin để setup n8n webhook.', 'bot');
+            updateConnectionStatus(false);
+            textarea.focus();
+            return;
+        }
+
+        // Test mode - return mock response
+        if (ABM_CHATBOT_CONFIG.testMode) {
+            hideTyping();
+            const testResponse = `Đây là response test cho tin nhắn: "${message}"\n\nCác tính năng:\n• Xuống dòng hoạt động\n• Format text đẹp\n• Session ID: ${generateSessionId()}`;
+            addMessage(testResponse, 'bot');
+            updateConnectionStatus(true);
+            textarea.focus();
+            return;
+        }
+
         try {
             // Prepare data in the format n8n expects
             const payload = {
@@ -501,20 +522,61 @@
                 chatInput: message
             };
 
+            console.log('🚀 Sending payload to n8n:', payload);
+            console.log('📡 Webhook URL:', ABM_CHATBOT_CONFIG.webhookUrl);
+
             const response = await fetch(ABM_CHATBOT_CONFIG.webhookUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Accept': 'application/json',
                 },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                mode: 'cors', // Enable CORS
+                credentials: 'omit' // Don't send cookies
             });
 
+            console.log('📊 Response status:', response.status);
+            console.log('📋 Response headers:', [...response.headers.entries()]);
+
             if (response.ok) {
-                const data = await response.json();
-                hideTyping();
+                // Check content type
+                const contentType = response.headers.get('content-type') || '';
+                console.log('📄 Content-Type:', contentType);
+
+                let data;
                 
-                // Debug: Log the actual response
-                console.log('N8N Response:', data);
+                if (contentType.includes('application/json')) {
+                    try {
+                        data = await response.json();
+                        console.log('✅ JSON Response:', data);
+                    } catch (jsonError) {
+                        console.error('❌ JSON Parse Error:', jsonError);
+                        const textResponse = await response.text();
+                        console.log('📝 Raw response:', textResponse);
+                        data = { response: 'Server trả về dữ liệu không hợp lệ.' };
+                    }
+                } else {
+                    // If not JSON, try to get as text
+                    const textResponse = await response.text();
+                    console.log('📝 Text response:', textResponse.substring(0, 200) + '...');
+                    
+                    // Try to parse as JSON anyway (sometimes content-type is wrong)
+                    try {
+                        data = JSON.parse(textResponse);
+                        console.log('✅ Parsed JSON from text:', data);
+                    } catch (e) {
+                        console.log('❌ Not JSON, treating as text');
+                        // If it's HTML error page, show friendly message
+                        if (textResponse.includes('<!DOCTYPE') || textResponse.includes('<html')) {
+                            data = { response: 'Server trả về trang web thay vì dữ liệu. Vui lòng kiểm tra cấu hình webhook.' };
+                        } else {
+                            data = { response: textResponse };
+                        }
+                    }
+                }
+                
+                hideTyping();
                 
                 // Handle different response formats from n8n
                 let botMessage;
@@ -529,19 +591,38 @@
                 } else if (typeof data === 'string') {
                     botMessage = data;
                 } else {
+                    console.log('⚠️ Unexpected response format:', data);
                     botMessage = 'Xin lỗi, tôi không thể xử lý yêu cầu của bạn lúc này.';
                 }
                 
-                console.log('Bot message before formatting:', JSON.stringify(botMessage));
+                console.log('💬 Bot message before formatting:', JSON.stringify(botMessage));
                 addMessage(botMessage, 'bot');
                 updateConnectionStatus(true);
             } else {
+                // Handle HTTP errors
+                const errorText = await response.text();
+                console.error('❌ HTTP Error:', response.status, response.statusText);
+                console.error('❌ Error body:', errorText.substring(0, 500));
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
         } catch (error) {
-            console.error('ABM Chatbot error:', error);
+            console.error('💥 ABM Chatbot error:', error);
             hideTyping();
-            addMessage('Xin lỗi, có lỗi xảy ra khi kết nối. Vui lòng thử lại sau.', 'bot');
+            
+            // More specific error messages
+            let errorMessage = 'Xin lỗi, có lỗi xảy ra khi kết nối. Vui lòng thử lại sau.';
+            
+            if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                errorMessage = '🔌 Không thể kết nối đến server. Vui lòng kiểm tra:\n• URL webhook có đúng không?\n• N8N có đang chạy không?\n• Có vấn đề mạng không?';
+            } else if (error.message.includes('JSON')) {
+                errorMessage = '📄 Server trả về dữ liệu không hợp lệ. Vui lòng liên hệ admin kiểm tra cấu hình n8n.';
+            } else if (error.message.includes('HTTP')) {
+                errorMessage = `🚨 Lỗi server: ${error.message}\n\nVui lòng kiểm tra:\n• N8N workflow có hoạt động không?\n• Webhook endpoint có đúng không?`;
+            } else if (error.message.includes('CORS')) {
+                errorMessage = '🚫 Lỗi CORS. N8N cần cấu hình để chấp nhận requests từ domain này.';
+            }
+            
+            addMessage(errorMessage, 'bot');
             updateConnectionStatus(false);
         }
 
@@ -691,6 +772,15 @@
             config: ABM_CHATBOT_CONFIG,
             updateConfig: (newConfig) => {
                 Object.assign(ABM_CHATBOT_CONFIG, newConfig);
+                console.log('✅ Config updated:', ABM_CHATBOT_CONFIG);
+            },
+            enableTestMode: () => {
+                ABM_CHATBOT_CONFIG.testMode = true;
+                console.log('🧪 Test mode enabled');
+            },
+            disableTestMode: () => {
+                ABM_CHATBOT_CONFIG.testMode = false;
+                console.log('🧪 Test mode disabled');
             },
             getSessionId: () => generateSessionId(),
             getMessages: () => messages
