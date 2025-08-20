@@ -340,7 +340,7 @@
         welcomeMessage: 'Xin chào! Tôi là ABM AI Assistant. Tôi có thể giúp gì cho bạn hôm nay?',
         placeholder: 'Nhập tin nhắn của bạn...',
         position: 'bottom-right', // bottom-right, bottom-left
-        testMode: true // BẬT TEST MODE TẠI ĐÂY
+        testMode: false // BẬT TEST MODE TẠI ĐÂY
     };
 
     let isOpen = false;
@@ -794,3 +794,4 @@
     init();
 
 })();
+
